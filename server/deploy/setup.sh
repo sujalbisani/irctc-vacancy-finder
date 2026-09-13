@@ -59,9 +59,20 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now irctc-vacancy.service
 
+echo "==> Opening port 4000 in the VM's own firewall (iptables)"
+# Oracle's stock Ubuntu images ship an iptables INPUT chain that only allows
+# SSH by default and REJECTs everything else -- this is separate from (and in
+# addition to) the cloud console's Security List, so both need port 4000 open.
+if ! sudo iptables -C INPUT -p tcp --dport 4000 -j ACCEPT 2>/dev/null; then
+  sudo iptables -I INPUT 5 -p tcp --dport 4000 -j ACCEPT
+fi
+if command -v netfilter-persistent >/dev/null; then
+  sudo netfilter-persistent save
+fi
+
 echo "==> Done. Service status:"
 sudo systemctl status irctc-vacancy.service --no-pager || true
 echo
-echo "App is listening on port 4000 on this machine."
-echo "Open the firewall/security-list port 4000 (or put a reverse proxy like Caddy/Nginx with TLS in front of it on 443) to reach it from your phone."
+echo "App is listening on port 4000 on this machine, and the VM's own firewall now allows it."
+echo "You still need to allow port 4000 in the cloud console's Security List (Networking > VCN > Subnet > Security Lists > Add Ingress Rules: source 0.0.0.0/0, TCP, port 4000)."
 echo "Logs: sudo journalctl -u irctc-vacancy.service -f"

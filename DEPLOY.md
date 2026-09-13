@@ -44,8 +44,12 @@ bash server/deploy/setup.sh
 ```
 
 This installs Node.js, Xvfb, Playwright's Chromium + OS deps, builds the
-client, and installs/starts a systemd service (`irctc-vacancy`) that keeps
-the app running (including across reboots and crashes).
+client, installs/starts a systemd service (`irctc-vacancy`) that keeps the
+app running (including across reboots and crashes), and opens port 4000 in
+the VM's own iptables firewall (Oracle's stock Ubuntu images ship with
+iptables rejecting everything except SSH by default -- this is *separate
+from* the cloud console's Security List, so both need port 4000 open, or the
+app is unreachable even though the console shows the port as allowed).
 
 ## 4. Use it from your phone
 
