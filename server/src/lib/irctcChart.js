@@ -75,7 +75,18 @@ async function selectJourneyDate(page, dateStr) {
   if ((await dayButton.count()) === 0 || (await dayButton.isDisabled())) {
     throw new ChartError('DATE_OUT_OF_RANGE', `IRCTC does not allow selecting ${dateStr} (outside the tool's supported date window).`);
   }
-  await dayButton.click();
+  // The calendar's own slide-transition wrapper (a `div[role="presentation"]`)
+  // can sit on top of the day buttons and intercept clicks, same click-
+  // interception quirk as the react-select fields above -- force it.
+  await dayButton.click({ force: true });
+
+  // This is a modal dialog picker (header shows "Sun, Sep 13" etc, with
+  // OK/CANCEL buttons) -- clicking a day only stages the selection, it does
+  // NOT confirm or close the dialog. Leaving it open blocks/steals keyboard
+  // focus from the next field (boarding station), so it must be confirmed.
+  const okButton = page.getByRole('button', { name: 'OK', exact: true });
+  await okButton.click({ force: true });
+  await header.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
 }
 
 /** Selects a train number in the "Train Name/Number" react-select field. */
@@ -301,7 +312,14 @@ async function readAllVacantBerthRows(page) {
  */
 async function fetchChart(trainNumber, dateStr, boardingCode) {
   const browser = await getBrowser();
-  const context = await browser.newContext();
+  // In some deployments (e.g. a cloud VPS whose IP is on datacenter/VPN
+  // reputation blocklists), only the IRCTC-bound browser traffic is routed
+  // through a local SOCKS5 proxy (e.g. a Tailscale exit-node tunnel) -- the
+  // rest of the app (confirmtkt, NTES, the API itself) is unaffected.
+  const contextOptions = process.env.IRCTC_PROXY_SERVER
+    ? { proxy: { server: process.env.IRCTC_PROXY_SERVER } }
+    : {};
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   page.setDefaultTimeout(NAV_TIMEOUT_MS);
 

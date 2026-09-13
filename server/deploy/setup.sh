@@ -41,13 +41,15 @@ echo "==> Installing systemd service"
 sudo tee /etc/systemd/system/irctc-vacancy.service > /dev/null <<EOF
 [Unit]
 Description=IRCTC Vacancy Finder
-After=network.target
+After=network.target irctc-vpn-tunnel.service
+Wants=irctc-vpn-tunnel.service
 
 [Service]
 Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${REPO_DIR}/server
 Environment=PORT=4000
+Environment=IRCTC_PROXY_SERVER=socks5://10.200.201.2:1080
 ExecStart=/usr/bin/xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" /usr/bin/node src/index.js
 Restart=on-failure
 RestartSec=5

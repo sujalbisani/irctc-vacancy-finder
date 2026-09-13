@@ -1,0 +1,16 @@
+[Unit]
+Description=Isolated Tailscale exit-node tunnel (phone) for IRCTC chart fetching
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash /home/ubuntu/ts-netns-up.sh 100.65.115.33
+ExecStop=/usr/bin/bash /home/ubuntu/vpn-netns-down.sh
+# Reuses whatever exit node IP/hostname was passed above; if the phone's
+# Tailscale IP ever changes, update this file and run:
+#   sudo systemctl daemon-reload && sudo systemctl restart irctc-vpn-tunnel
+
+[Install]
+WantedBy=multi-user.target
