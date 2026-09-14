@@ -2,9 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import StationInput from './StationInput';
 import './App.css';
 
-function todayISO() {
+function isoOffset(days) {
   const d = new Date();
+  d.setDate(d.getDate() + days);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function todayISO() {
+  return isoOffset(0);
+}
+// IRCTC's own online-charts picker only accepts yesterday/today/tomorrow --
+// it reads charts that are already (or about to be) prepared, not future
+// advance-reservation dates. Confirmed directly against the live picker.
+function minDateISO() {
+  return isoOffset(-1);
+}
+function maxDateISO() {
+  return isoOffset(1);
 }
 
 const STATUS_LABEL = {
@@ -182,7 +195,8 @@ export default function App() {
                   className="mono-input"
                   type="date"
                   value={date}
-                  min={todayISO()}
+                  min={minDateISO()}
+                  max={maxDateISO()}
                   onChange={(e) => setDate(e.target.value)}
                 />
               </div>
@@ -193,7 +207,10 @@ export default function App() {
             </button>
           </form>
 
-          <p className="manifest-footnote">Free to use. No account, no fees — just the official chart, read for you.</p>
+          <p className="manifest-footnote">
+            Free to use, no account or fees. Covers yesterday, today and tomorrow — IRCTC only publishes reservation
+            charts that close to departure, not advance-booking dates further out.
+          </p>
         </div>
       </div>
 

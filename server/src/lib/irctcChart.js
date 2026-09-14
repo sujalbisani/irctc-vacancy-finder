@@ -66,68 +66,104 @@ function extractCode(text) {
   return m ? m[1] : null;
 }
 
-/** Selects `dateStr` (YYYY-MM-DD) in the MUI date-picker popup opened from the journey-date field. */
+/**
+ * Selects `dateStr` (YYYY-MM-DD) in the MUI date-picker popup opened from the
+ * journey-date field, and VERIFIES the field actually shows that date
+ * afterwards before returning.
+ *
+ * This verification is not optional: a swallowed click (overlay interception,
+ * a slow render, the OK-confirm step failing) would otherwise leave whatever
+ * date was already in the field -- often today's -- silently selected. The
+ * caller would then query IRCTC for today's chart while believing it asked
+ * about the real target date, and a today's-chart-is-ready result would be
+ * misreported as if it were the future date's. Confirmed date-field value is
+ * the only thing trusted here, not "did our clicks not throw."
+ */
 async function selectJourneyDate(page, dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const targetMonthIndex = m - 1;
+  const expectedFieldValue = `${String(d).padStart(2, '0')}-${String(m).padStart(2, '0')}-${y}`;
 
   const dateField = page.locator('input[type="text"]').nth(1);
-  await dateField.click({ force: true });
+  const valueBeforeAnyInteraction = (await dateField.inputValue().catch(() => '')).trim();
 
-  const header = page.locator('button + div, div').filter({ hasText: /^[A-Za-z]+ \d{4}$/ }).first();
-  await header.waitFor({ state: 'visible', timeout: 5000 });
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await dateField.click({ force: true });
 
-  const prevBtn = page.locator('button').nth(1);
-  const nextBtn = page.locator('button').nth(2);
+    const header = page.locator('button + div, div').filter({ hasText: /^[A-Za-z]+ \d{4}$/ }).first();
+    await header.waitFor({ state: 'visible', timeout: 5000 });
 
-  for (let i = 0; i < 24; i++) {
-    const headerText = (await header.textContent() || '').trim();
-    const match = /^([A-Za-z]+)\s+(\d{4})$/.exec(headerText);
-    if (!match) throw new ChartError('DATE_PICKER_UNEXPECTED', `Unexpected calendar header: "${headerText}"`);
-    const curMonthIndex = MONTHS.indexOf(match[1]);
-    const curYear = Number(match[2]);
-    const diff = (y * 12 + targetMonthIndex) - (curYear * 12 + curMonthIndex);
-    if (diff === 0) break;
-    const btn = diff > 0 ? nextBtn : prevBtn;
-    if (await btn.isDisabled()) {
+    const prevBtn = page.locator('button').nth(1);
+    const nextBtn = page.locator('button').nth(2);
+
+    for (let i = 0; i < 24; i++) {
+      const headerText = (await header.textContent() || '').trim();
+      const match = /^([A-Za-z]+)\s+(\d{4})$/.exec(headerText);
+      if (!match) throw new ChartError('DATE_PICKER_UNEXPECTED', `Unexpected calendar header: "${headerText}"`);
+      const curMonthIndex = MONTHS.indexOf(match[1]);
+      const curYear = Number(match[2]);
+      const diff = (y * 12 + targetMonthIndex) - (curYear * 12 + curMonthIndex);
+      if (diff === 0) break;
+      const btn = diff > 0 ? nextBtn : prevBtn;
+      if (await btn.isDisabled()) {
+        throw new ChartError('DATE_OUT_OF_RANGE', `IRCTC does not allow selecting ${dateStr} (outside the tool's supported date window).`);
+      }
+      await btn.click();
+      await page.waitForTimeout(200);
+    }
+
+    const dayButton = page.locator('button', { hasText: new RegExp(`^${d}$`) }).first();
+    if ((await dayButton.count()) === 0 || (await dayButton.isDisabled())) {
       throw new ChartError('DATE_OUT_OF_RANGE', `IRCTC does not allow selecting ${dateStr} (outside the tool's supported date window).`);
     }
-    await btn.click();
-    await page.waitForTimeout(200);
-  }
+    // The calendar's own slide-transition wrapper (a `div[role="presentation"]`)
+    // can sit on top of the day buttons and intercept clicks, same click-
+    // interception quirk as the react-select fields above -- force it.
+    await dayButton.click({ force: true });
 
-  const dayButton = page.locator('button', { hasText: new RegExp(`^${d}$`) }).first();
-  if ((await dayButton.count()) === 0 || (await dayButton.isDisabled())) {
-    throw new ChartError('DATE_OUT_OF_RANGE', `IRCTC does not allow selecting ${dateStr} (outside the tool's supported date window).`);
-  }
-  // The calendar's own slide-transition wrapper (a `div[role="presentation"]`)
-  // can sit on top of the day buttons and intercept clicks, same click-
-  // interception quirk as the react-select fields above -- force it.
-  await dayButton.click({ force: true });
-
-  // This is a modal dialog picker (header shows "Sun, Sep 13" etc, with
-  // OK/CANCEL buttons) -- clicking a day only stages the selection, it does
-  // NOT confirm or close the dialog. Leaving it open blocks/steals keyboard
-  // focus from the next field (boarding station), so it must be confirmed.
-  // If the clicked day is already the currently-selected date (e.g. the
-  // field defaults to today and the requested journey date IS today), MUI
-  // treats the click as a no-op change and auto-closes the dialog immediately
-  // -- no OK button ever appears. Only click OK if the dialog is still open.
-  const okButton = page.getByRole('button', { name: 'OK', exact: true });
-  await page.waitForTimeout(300);
-  const dialogStillOpen = await okButton.isVisible().catch(() => false);
-  if (dialogStillOpen) {
-    try {
-      await okButton.click({ force: true, timeout: 10000 });
-    } catch (err) {
-      if (process.env.IRCTC_DEBUG) {
-        await page.screenshot({ path: 'debug-out/ok-button-fail.png' }).catch(() => {});
-        const html = await page.content().catch(() => '');
-        require('fs').writeFileSync('debug-out/ok-button-fail.html', html);
-      }
-      throw err;
+    // This is a modal dialog picker (header shows "Sun, Sep 13" etc, with
+    // OK/CANCEL buttons) -- clicking a day only stages the selection, it does
+    // NOT confirm or close the dialog. Leaving it open blocks/steals keyboard
+    // focus from the next field (boarding station), so it must be confirmed.
+    // If the clicked day is already the currently-selected date (e.g. the
+    // field defaults to today and the requested journey date IS today), MUI
+    // treats the click as a no-op change and auto-closes the dialog immediately
+    // -- no OK button ever appears. Only click OK if the dialog is still open.
+    const okButton = page.getByRole('button', { name: 'OK', exact: true });
+    await page.waitForTimeout(300);
+    const dialogStillOpen = await okButton.isVisible().catch(() => false);
+    if (dialogStillOpen) {
+      await okButton.click({ force: true, timeout: 10000 }).catch(() => {});
+      await header.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
     }
-    await header.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+
+    const actualValue = (await dateField.inputValue().catch(() => '')).trim();
+    if (actualValue === expectedFieldValue) return;
+
+    if (attempt === 2) {
+      if (process.env.IRCTC_DEBUG) {
+        await page.screenshot({ path: 'debug-out/date-mismatch.png' }).catch(() => {});
+      }
+      // If the field is still showing whatever it started on, the day click
+      // wasn't a flake -- IRCTC's own picker silently refused the selection
+      // (no `disabled` attribute, it just doesn't move). The online-charts
+      // tool's real usable window is a near-term one for reading prepared
+      // charts, much narrower than full 120-day advance reservation; this is
+      // the actual signal that the requested date falls outside it.
+      if (actualValue === valueBeforeAnyInteraction) {
+        throw new ChartError(
+          'DATE_OUT_OF_RANGE',
+          `IRCTC's online-charts tool would not move the date to ${expectedFieldValue} -- it only covers yesterday, today, or tomorrow's journeys, not far-future advance reservation dates.`
+        );
+      }
+      throw new ChartError(
+        'DATE_SELECTION_FAILED',
+        `Could not confirm the journey date was set to ${expectedFieldValue} (field shows "${actualValue}").`
+      );
+    }
+    // Whatever went wrong, make sure no leftover dialog survives into the retry.
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.waitForTimeout(200);
   }
 }
 
@@ -381,10 +417,24 @@ async function fetchChartInternal(trainNumber, dateStr, boardingCode) {
   page.setDefaultTimeout(NAV_TIMEOUT_MS);
 
   try {
+    let response;
     try {
-      await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
+      response = await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
     } catch (navErr) {
       throw new ChartError('SITE_UNAVAILABLE', `Could not reach IRCTC online-charts: ${navErr.message.split('\n')[0]}`);
+    }
+
+    // A non-2xx here (or a CAPTCHA/"access denied" style page that still
+    // loads with HTTP 200) usually means IRCTC's anti-bot layer is
+    // rate-limiting or blocking this IP for now, not a real outage or a
+    // parsing problem -- surface that distinctly instead of letting it fail
+    // downstream as a confusing "train not found" / timeout.
+    if (response && !response.ok()) {
+      throw new ChartError('BLOCKED_OR_RATE_LIMITED', `IRCTC responded with HTTP ${response.status()} -- likely a temporary block or rate limit from this IP, not a real outage.`);
+    }
+    const blockedPage = page.getByText(/captcha|access denied|too many requests|unusual traffic|request blocked/i);
+    if (await blockedPage.count()) {
+      throw new ChartError('BLOCKED_OR_RATE_LIMITED', 'IRCTC is showing a CAPTCHA/block page for this IP -- likely temporary rate limiting, try again shortly.');
     }
 
     const maintenanceBanner = page.getByText(/maintenance downtime/i);

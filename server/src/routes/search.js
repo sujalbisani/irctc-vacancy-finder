@@ -35,8 +35,23 @@ function rateLimit(req, res, next) {
   next();
 }
 
-function todayISO() {
+// IRCTC's online-charts date picker is not an advance-reservation calendar --
+// it's for reading charts that are already, or about to be, prepared. Probed
+// directly against the live picker across a wide offset range: day-offsets
+// -1, 0 and +1 from today are selectable (covers overnight journeys whose
+// chart is still relevant a day either side); everything outside that gets
+// silently rejected by IRCTC's own picker (snaps back, no `disabled`
+// attribute -- it doesn't even fail loudly on their end). Reject out-of-
+// window dates here, before spending a browser/tunnel round-trip on a search
+// IRCTC will refuse anyway.
+function yesterdayISO() {
   const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function tomorrowISO() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
@@ -165,8 +180,11 @@ router.post('/', rateLimit, async (req, res) => {
   if (!DATE_RE.test(date)) {
     return res.status(400).json({ error: 'invalid_date', message: 'date must be in YYYY-MM-DD format.' });
   }
-  if (date < todayISO()) {
-    return res.status(400).json({ error: 'date_in_past', message: 'Journey date cannot be in the past.' });
+  if (date < yesterdayISO() || date > tomorrowISO()) {
+    return res.status(400).json({
+      error: 'date_out_of_range',
+      message: "IRCTC's online-charts tool only covers yesterday, today, or tomorrow's journeys -- it can't look up far-future advance reservation dates.",
+    });
   }
 
   let fromStation;
@@ -236,8 +254,11 @@ router.post('/train', rateLimit, async (req, res) => {
   if (!DATE_RE.test(date)) {
     return res.status(400).json({ error: 'invalid_date', message: 'date must be in YYYY-MM-DD format.' });
   }
-  if (date < todayISO()) {
-    return res.status(400).json({ error: 'date_in_past', message: 'Journey date cannot be in the past.' });
+  if (date < yesterdayISO() || date > tomorrowISO()) {
+    return res.status(400).json({
+      error: 'date_out_of_range',
+      message: "IRCTC's online-charts tool only covers yesterday, today, or tomorrow's journeys -- it can't look up far-future advance reservation dates.",
+    });
   }
 
   let fromStation;
