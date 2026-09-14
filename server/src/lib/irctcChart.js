@@ -43,6 +43,15 @@ async function closeBrowser() {
 // one phone IP in a way that risks getting it rate-limited/blocked -- breaking
 // the tunnel for everyone. Extra requests queue instead of running in
 // parallel; each waits its turn rather than failing.
+//
+// Measured, not assumed: bumped to 3 and timed it against the same 4-train
+// route that took 103s end-to-end at 2. At 3, the first result took until
+// t+63s (vs t+34s at 2), and the run was still stuck at 3/4 past t+187s
+// before being reverted -- this VPS has only 1 CPU core, and past 2
+// concurrent contexts they visibly start fighting over it instead of
+// actually running in parallel, making the whole batch slower, not faster.
+// 2 is the real ceiling here; re-measure with actual timing before ever
+// raising it again, not just cranking the number up.
 const MAX_CONCURRENT_FETCHES = 2;
 let activeFetches = 0;
 const fetchWaitQueue = [];
