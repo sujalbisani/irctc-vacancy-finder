@@ -84,9 +84,26 @@ async function selectJourneyDate(page, dateStr) {
   // OK/CANCEL buttons) -- clicking a day only stages the selection, it does
   // NOT confirm or close the dialog. Leaving it open blocks/steals keyboard
   // focus from the next field (boarding station), so it must be confirmed.
+  // If the clicked day is already the currently-selected date (e.g. the
+  // field defaults to today and the requested journey date IS today), MUI
+  // treats the click as a no-op change and auto-closes the dialog immediately
+  // -- no OK button ever appears. Only click OK if the dialog is still open.
   const okButton = page.getByRole('button', { name: 'OK', exact: true });
-  await okButton.click({ force: true });
-  await header.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const dialogStillOpen = await okButton.isVisible().catch(() => false);
+  if (dialogStillOpen) {
+    try {
+      await okButton.click({ force: true, timeout: 10000 });
+    } catch (err) {
+      if (process.env.IRCTC_DEBUG) {
+        await page.screenshot({ path: 'debug-out/ok-button-fail.png' }).catch(() => {});
+        const html = await page.content().catch(() => '');
+        require('fs').writeFileSync('debug-out/ok-button-fail.html', html);
+      }
+      throw err;
+    }
+    await header.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+  }
 }
 
 /** Selects a train number in the "Train Name/Number" react-select field. */
