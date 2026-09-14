@@ -44,15 +44,18 @@ async function closeBrowser() {
 // the tunnel for everyone. Extra requests queue instead of running in
 // parallel; each waits its turn rather than failing.
 //
-// Measured, not assumed: bumped to 3 and timed it against the same 4-train
-// route that took 103s end-to-end at 2. At 3, the first result took until
-// t+63s (vs t+34s at 2), and the run was still stuck at 3/4 past t+187s
-// before being reverted -- this VPS has only 1 CPU core, and past 2
-// concurrent contexts they visibly start fighting over it instead of
-// actually running in parallel, making the whole batch slower, not faster.
-// 2 is the real ceiling here; re-measure with actual timing before ever
-// raising it again, not just cranking the number up.
-const MAX_CONCURRENT_FETCHES = 2;
+// Measured, not assumed. Bumped to 3 and timed it against the same 4-train
+// route that took 103s end-to-end at 2 -- at 3 it took 194s. Reverted to 2,
+// then re-measured 2 on its own with `top` running alongside: two concurrent
+// contexts alone pinned this VPS's single CPU core at 100% (0% idle), and
+// the same 4-train route that once finished in 103s took 190s+ that time.
+// This box has exactly one core; ANY concurrent page-interaction load
+// contends with itself here, there's no real parallelism to be had. Fully
+// sequential (1) is the only mode that gives each fetch the whole core to
+// itself instead of fighting another context for it. Re-measure with `top`
+// running before ever raising this again -- a bigger/cheaper VPS is the
+// actual fix for real concurrency, not this number.
+const MAX_CONCURRENT_FETCHES = 1;
 let activeFetches = 0;
 const fetchWaitQueue = [];
 
