@@ -147,7 +147,13 @@ async function selectTrain(page, trainNumber) {
   } catch {
     throw new ChartError('TRAIN_NOT_FOUND', `Train ${trainNumber} was not found in IRCTC's train list.`);
   }
+  // Capture IRCTC's own display text (e.g. "12952 - MMCT TEJAS RAJ") so a
+  // direct train-number lookup (no confirmtkt candidate metadata available)
+  // still has a real train name, straight from the source we're already on.
+  const optionText = (await option.textContent()) || '';
   await option.click();
+  const nameMatch = /^\s*\d+\s*-\s*(.+)$/.exec(optionText.trim());
+  return nameMatch ? nameMatch[1].trim() : null;
 }
 
 /**
@@ -386,7 +392,7 @@ async function fetchChartInternal(trainNumber, dateStr, boardingCode) {
       throw new ChartError('MAINTENANCE', 'IRCTC online-charts is currently under scheduled maintenance downtime.');
     }
 
-    await selectTrain(page, trainNumber);
+    const trainDisplayName = await selectTrain(page, trainNumber);
     await selectJourneyDate(page, dateStr);
     const routeCodes = await selectBoardingStationAndReadRoute(page, boardingCode);
     await submitAndWaitForChart(page);
@@ -440,7 +446,7 @@ async function fetchChartInternal(trainNumber, dateStr, boardingCode) {
       classes.push({ code: classHeaders[i].code, label: classHeaders[i].label, rows });
     }
 
-    return { routeCodes, chartMeta, classes };
+    return { routeCodes, chartMeta, classes, trainDisplayName };
   } finally {
     await context.close();
   }

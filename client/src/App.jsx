@@ -8,13 +8,15 @@ function todayISO() {
 }
 
 const STATUS_LABEL = {
-  unavailable: 'Could not check chart',
-  route_mismatch: 'Route data mismatch',
+  unavailable: 'Could not read chart',
+  route_mismatch: 'Route mismatch',
 };
 
 export default function App() {
+  const [mode, setMode] = useState('route'); // 'route' | 'train'
   const [from, setFrom] = useState(null);
   const [to, setTo] = useState(null);
+  const [trainNumber, setTrainNumber] = useState('');
   const [date, setDate] = useState(todayISO());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -54,20 +56,30 @@ export default function App() {
     setJob(null);
 
     if (!from || !to) {
-      setError('Please pick both From and To stations from the suggestions list.');
+      setError('Pick both stations from the suggestions list.');
       return;
     }
     if (from.code === to.code) {
-      setError('From and To stations must be different.');
+      setError('From and To need to be different stations.');
+      return;
+    }
+    if (mode === 'train' && !/^\d{3,6}$/.test(trainNumber.trim())) {
+      setError('Enter a valid train number, e.g. 12952.');
       return;
     }
 
+    const endpoint = mode === 'train' ? '/api/search/train' : '/api/search';
+    const body =
+      mode === 'train'
+        ? { trainNumber: trainNumber.trim(), from: from.code, to: to.code, date }
+        : { from: from.code, to: to.code, date };
+
     setLoading(true);
     try {
-      const res = await fetch('/api/search', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: from.code, to: to.code, date }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -91,105 +103,97 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="hero-banner">
-        <div className="hero-streaks" aria-hidden="true">
-          <span className="hero-streak s1" />
-          <span className="hero-streak s2" />
-          <span className="hero-streak s3" />
-          <span className="hero-streak s4" />
-          <span className="hero-glow" />
-        </div>
-
-        <nav className="hero-nav">
-          <span className="hero-nav-brand">
+      <div className="manifest">
+        <div className="manifest-header">
+          <span className="manifest-brand">
             <TrainIcon /> Vacant Seat Finder
           </span>
-          <a
-            className="hero-nav-link"
-            href="https://irctc.co.in/online-charts"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Official IRCTC charts ↗
-          </a>
-        </nav>
-
-        <div className="hero-content">
-          <h1>
-            FIND VACANT
-            <br />
-            TRAIN SEATS
-          </h1>
-          <p className="subtitle">
-            Live IRCTC reservation-chart scanning — full seats, seat combinations along the way, and the closest
-            reachable point when nothing covers your whole trip.
-          </p>
-
-          <form className="search-form search-form-steps" onSubmit={handleSearch}>
-            <div className="step-field step-from">
-              <StationInput
-                label={
-                  <>
-                    <span className="step-num">1</span>From
-                  </>
-                }
-                value={from}
-                onChange={setFrom}
-                placeholder="e.g. New Delhi"
-              />
-            </div>
+          <div className="manifest-tabs" role="tablist" aria-label="Search mode">
             <button
               type="button"
-              className="swap-btn"
-              onClick={swapStations}
-              disabled={!from && !to}
-              aria-label="Swap stations"
-              title="Swap stations"
+              role="tab"
+              aria-selected={mode === 'route'}
+              className={mode === 'route' ? 'is-active' : ''}
+              onClick={() => setMode('route')}
             >
-              <SwapIcon />
+              By route
             </button>
-            <div className="step-field step-to">
-              <StationInput
-                label={
-                  <>
-                    <span className="step-num">2</span>To
-                  </>
-                }
-                value={to}
-                onChange={setTo}
-                placeholder="e.g. Mumbai Central"
-              />
-            </div>
-            <div className="step-field date-input">
-              <label>
-                <span className="step-num">3</span>When to go
-              </label>
-              <input type="date" value={date} min={todayISO()} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <button type="submit" className="submit-btn glow-btn" disabled={loading}>
-              {loading ? (
-                <>
-                  <span className="spinner" /> Searching…
-                </>
-              ) : (
-                <>
-                  <SearchIcon /> Find seats
-                </>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'train'}
+              className={mode === 'train' ? 'is-active' : ''}
+              onClick={() => setMode('train')}
+            >
+              By train no.
+            </button>
+          </div>
+        </div>
+
+        <div className="manifest-body">
+          <h1 className="manifest-headline">Is there a seat on your train?</h1>
+          <p className="manifest-sub">
+            Reads IRCTC's own reservation chart and checks every berth against your exact journey — including
+            seats you'd switch partway, and the closest you can get when nothing covers the whole trip.
+          </p>
+
+          <form className="manifest-form" onSubmit={handleSearch}>
+            <div className="manifest-row">
+              {mode === 'train' && (
+                <div className="field field-train">
+                  <label htmlFor="trainNumber">Train no.</label>
+                  <input
+                    id="trainNumber"
+                    className="mono-input"
+                    type="text"
+                    inputMode="numeric"
+                    value={trainNumber}
+                    onChange={(e) => setTrainNumber(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="12952"
+                    maxLength={6}
+                  />
+                </div>
               )}
+              <div className="field field-from">
+                <StationInput
+                  label={mode === 'train' ? 'Boarding at' : 'From'}
+                  value={from}
+                  onChange={setFrom}
+                  placeholder="New Delhi"
+                />
+              </div>
+              <button
+                type="button"
+                className="swap-btn"
+                onClick={swapStations}
+                disabled={!from && !to}
+                aria-label="Swap stations"
+                title="Swap stations"
+              >
+                <SwapIcon />
+              </button>
+              <div className="field field-to">
+                <StationInput label="To" value={to} onChange={setTo} placeholder="Mumbai Central" />
+              </div>
+              <div className="field field-date">
+                <label htmlFor="journeyDate">Date</label>
+                <input
+                  id="journeyDate"
+                  className="mono-input"
+                  type="date"
+                  value={date}
+                  min={todayISO()}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <button type="submit" className="stamp-btn" disabled={loading}>
+              {loading ? 'Checking…' : 'Check chart'}
             </button>
           </form>
 
-          <div className="feature-row">
-            <span>
-              <LiveIcon /> Live IRCTC data
-            </span>
-            <span>
-              <SplitIcon /> Split &amp; nearest-seat fallback
-            </span>
-            <span>
-              <FreeIcon /> No login, no fees
-            </span>
-          </div>
+          <p className="manifest-footnote">Free to use. No account, no fees — just the official chart, read for you.</p>
         </div>
       </div>
 
@@ -212,7 +216,9 @@ export default function App() {
             <span className="results-meta-date">on {job.query.date}</span>
           </p>
           <p className="results-count">
-            Found {job.totalCandidates} direct train{job.totalCandidates === 1 ? '' : 's'} for this route.
+            {job.query.trainNumber
+              ? `Checking train ${job.query.trainNumber} directly.`
+              : `Found ${job.totalCandidates} direct train${job.totalCandidates === 1 ? '' : 's'} for this route.`}
           </p>
 
           {job.status === 'running' && (
@@ -221,7 +227,7 @@ export default function App() {
                 <div className="progress-fill" style={{ width: `${progressPct}%` }} />
               </div>
               <span className="progress-label">
-                Checking live IRCTC charts… {job.checked} of {job.toCheck}
+                Reading live IRCTC charts… {job.checked} of {job.toCheck}
               </span>
             </div>
           )}
@@ -251,42 +257,54 @@ export default function App() {
         </div>
       )}
 
-      <footer className="footer">Not affiliated with IRCTC · Vacancy data read live from official reservation charts</footer>
+      <footer className="footer">Not affiliated with IRCTC. Vacancy data is read live from the official reservation chart.</footer>
     </div>
   );
 }
 
-function StatusBadge({ status }) {
-  if (status === 'ok') return <span className="status-badge status-ok">Chart ready</span>;
-  if (status === 'route_mismatch') return <span className="status-badge status-warn">Route mismatch</span>;
-  return <span className="status-badge status-bad">Unavailable</span>;
+function outcomeOf(t) {
+  if (t.chartStatus !== 'ok') return 'error';
+  if (t.usableVacancies?.length > 0) return 'full';
+  if (t.splitOptions?.length > 0 || t.partialCoverageOnly?.length > 0) return 'partial';
+  return 'none';
+}
+
+function StatusBadge({ outcome }) {
+  if (outcome === 'full') return <span className="stamp-badge stamp-green">Vacant</span>;
+  if (outcome === 'partial') return <span className="stamp-badge stamp-amber">Partial</span>;
+  if (outcome === 'none') return <span className="stamp-badge stamp-red">No vacancy</span>;
+  return <span className="stamp-badge stamp-grey">Unavailable</span>;
 }
 
 function TrainCard({ t }) {
   const hasFull = t.usableVacancies?.length > 0;
   const hasSplit = t.splitOptions?.length > 0;
   const hasPartial = t.partialCoverageOnly?.length > 0;
+  const outcome = outcomeOf(t);
 
   return (
-    <div className={`train-card${hasFull ? ' train-card-hit' : ''}`}>
+    <div className={`train-card train-card-${outcome}`}>
       <div className="train-header">
         <span className="train-name">
-          <span className="train-number">{t.trainNumber}</span> {t.trainName}
+          <span className="train-number mono">{t.trainNumber}</span> {t.trainName || `Train ${t.trainNumber}`}
         </span>
-        <span className="train-times">
-          {t.departureTime} <ArrowIcon small /> {t.arrivalTime}
-          <span className="train-duration">
-            {Math.floor(t.durationMinutes / 60)}h {t.durationMinutes % 60}m
-          </span>
-        </span>
+        <StatusBadge outcome={outcome} />
       </div>
+
+      {t.departureTime && t.arrivalTime && (
+        <div className="train-times mono">
+          {t.departureTime} <ArrowIcon small /> {t.arrivalTime}
+          {typeof t.durationMinutes === 'number' && (
+            <span className="train-duration">
+              {Math.floor(t.durationMinutes / 60)}h {t.durationMinutes % 60}m
+            </span>
+          )}
+        </div>
+      )}
 
       {t.chartStatus === 'ok' && (
         <>
-          <div className="chart-meta">
-            <StatusBadge status={t.chartStatus} />
-            {t.chartMeta?.chartStatusAt && <span>Vacancy as of {t.chartMeta.chartStatusAt}</span>}
-          </div>
+          {t.chartMeta?.chartStatusAt && <div className="chart-meta">Vacancy as of {t.chartMeta.chartStatusAt}</div>}
 
           {hasFull && (
             <div className="vacancy-table-wrap">
@@ -307,8 +325,8 @@ function TrainCard({ t }) {
                       <td>
                         <span className={`class-pill class-${(v.class || '').toLowerCase()}`}>{v.class}</span>
                       </td>
-                      <td>{v.coach}</td>
-                      <td>{v.berthNo}</td>
+                      <td className="mono">{v.coach}</td>
+                      <td className="mono">{v.berthNo}</td>
                       <td>{v.berthType || '—'}</td>
                       <td>{v.vacantFrom}</td>
                       <td>{v.vacantUntil}</td>
@@ -321,9 +339,7 @@ function TrainCard({ t }) {
 
           {!hasFull && hasSplit && (
             <div className="split-options">
-              <div className="split-heading">
-                No single seat covers your full journey — but you could switch seats along the way:
-              </div>
+              <div className="split-heading">No single seat covers your full journey — but you could switch seats along the way:</div>
               {t.splitOptions.map((opt, i) => (
                 <SplitChain key={i} opt={opt} />
               ))}
@@ -332,14 +348,12 @@ function TrainCard({ t }) {
 
           {!hasFull && !hasSplit && hasPartial && (
             <div className="split-options">
-              <div className="split-heading">
-                No seat (or combination) covers your full journey right now — closest reachable point, per class:
-              </div>
+              <div className="split-heading">No seat, or combination, covers the full journey right now — closest you can get, per class:</div>
               {t.partialCoverageOnly.map((p, i) => (
                 <SplitChain
                   key={i}
                   opt={p}
-                  partialNote={`gets you to ${p.reachedStationName} · ${p.stationsShortOfDestination} station${
+                  partialNote={`gets you to ${p.reachedStationName}, ${p.stationsShortOfDestination} station${
                     p.stationsShortOfDestination === 1 ? '' : 's'
                   } short of your destination`}
                 />
@@ -353,11 +367,6 @@ function TrainCard({ t }) {
         </>
       )}
 
-      {t.chartStatus !== 'ok' && (
-        <div className="chart-meta">
-          <StatusBadge status={t.chartStatus} />
-        </div>
-      )}
       {t.chartStatus !== 'ok' && (
         <div className="banner warn">
           {STATUS_LABEL[t.chartStatus] || t.chartStatus}: {t.message}
@@ -375,7 +384,7 @@ function SplitChain({ opt, partialNote }) {
         {partialNote ? ` ${partialNote}` : ''}
         {opt.seatChanges > 0 ? ` · ${opt.seatChanges} seat change${opt.seatChanges > 1 ? 's' : ''}` : ''}
       </div>
-      <div className="split-chain">
+      <div className="split-chain mono">
         {opt.segments.map((seg, j) => (
           <span className="split-leg" key={j}>
             {j > 0 && <span className="split-arrow">→</span>}
@@ -390,8 +399,8 @@ function SplitChain({ opt, partialNote }) {
 
 function TrainIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" width="26" height="26" aria-hidden="true">
-      <rect x="5" y="3" width="14" height="13" rx="4" stroke="currentColor" strokeWidth="1.6" />
+    <svg viewBox="0 0 24 24" fill="none" width="20" height="20" aria-hidden="true">
+      <rect x="5" y="3" width="14" height="13" rx="3" stroke="currentColor" strokeWidth="1.6" />
       <path d="M5 11h14" stroke="currentColor" strokeWidth="1.6" />
       <circle cx="8.5" cy="13.5" r="0.9" fill="currentColor" />
       <circle cx="15.5" cy="13.5" r="0.9" fill="currentColor" />
@@ -414,24 +423,10 @@ function SwapIcon() {
   );
 }
 
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" width="17" height="17" aria-hidden="true">
-      <circle cx="9" cy="9" r="6" stroke="currentColor" strokeWidth="1.8" />
-      <path d="m17 17-3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function WarnIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" width="16" height="16" aria-hidden="true">
-      <path
-        d="M10 3 1.5 17h17L10 3Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
+      <path d="M10 3 1.5 17h17L10 3Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
       <path d="M10 8.3v3.3M10 14.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
@@ -448,48 +443,6 @@ function ArrowIcon({ small }) {
       aria-hidden="true"
     >
       <path d="M1 6h16M13 1l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function LiveIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" width="15" height="15" aria-hidden="true">
-      <circle cx="10" cy="10" r="2.4" fill="currentColor" />
-      <path
-        d="M5.5 5.5a6.4 6.4 0 0 0 0 9M14.5 5.5a6.4 6.4 0 0 1 0 9M3 3a10 10 0 0 0 0 14M17 3a10 10 0 0 1 0 14"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function SplitIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" width="15" height="15" aria-hidden="true">
-      <path
-        d="M3 5h5.5l3 10H17M3 15h5.5l1.2-4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="m14.5 2.5 2.5 2.5-2.5 2.5M14.5 12.5l2.5 2.5-2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function FreeIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" width="15" height="15" aria-hidden="true">
-      <path
-        d="m10 2.5 2.06 4.18 4.61.67-3.33 3.25.78 4.6L10 13.02l-4.12 2.18.78-4.6-3.33-3.25 4.61-.67L10 2.5Z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
     </svg>
   );
 }

@@ -54,9 +54,14 @@ async function checkTrain(train, fromCode, toCode, date) {
   const chart = await getChartCached(train.trainNumber, date, fromCode);
   const routeIndex = buildRouteIndex(chart.routeCodes);
 
+  // confirmtkt candidates already carry a trainName; a direct train-number
+  // lookup doesn't, so fall back to the name IRCTC's own page showed us.
+  const trainName = train.trainName || chart.trainDisplayName || `Train ${train.trainNumber}`;
+
   if (!routeIndex.has(toCode)) {
     return {
       ...train,
+      trainName,
       chartStatus: 'route_mismatch',
       message: 'IRCTC route data for this train does not include the requested destination station.',
     };
@@ -131,7 +136,7 @@ async function checkTrain(train, fromCode, toCode, date) {
     }
   }
 
-  return { ...train, chartStatus: 'ok', chartMeta: chart.chartMeta, usableVacancies, splitOptions, partialCoverageOnly };
+  return { ...train, trainName, chartStatus: 'ok', chartMeta: chart.chartMeta, usableVacancies, splitOptions, partialCoverageOnly };
 }
 
 async function runSearchJob(job, fromCode, toCode, date, toCheck) {
@@ -200,6 +205,68 @@ router.post('/', rateLimit, async (req, res) => {
     checked: 0,
     trains: [],
     trainsNotRunningOnDate: notRunningTrains,
+  });
+
+  runSearchJob(job, fromCode, toCode, date, toCheck).catch((err) => {
+    updateJob(job.id, { status: 'error', error: err.message });
+  });
+
+  res.status(202).json({ jobId: job.id });
+});
+
+// Direct train-number lookup: skips confirmtkt route discovery entirely for
+// someone who already knows which train they're checking (e.g. it's already
+// on their ticket, or confirmtkt's route search doesn't surface it for some
+// reason). Reuses the exact same job/poll machinery and coverage logic as the
+// station-to-station search above -- just a single-train "candidate list".
+const TRAIN_NUMBER_RE = /^\d{3,6}$/;
+
+router.post('/train', rateLimit, async (req, res) => {
+  const trainNumber = String(req.body.trainNumber || req.query.trainNumber || '').trim();
+  const fromCode = String(req.body.from || req.query.from || '').trim().toUpperCase();
+  const toCode = String(req.body.to || req.query.to || '').trim().toUpperCase();
+  const date = String(req.body.date || req.query.date || '').trim();
+
+  if (!trainNumber || !fromCode || !toCode || !date) {
+    return res.status(400).json({ error: 'missing_params', message: 'trainNumber, from, to and date are required.' });
+  }
+  if (!TRAIN_NUMBER_RE.test(trainNumber)) {
+    return res.status(400).json({ error: 'invalid_train_number', message: 'Train number should be numeric, e.g. 12952.' });
+  }
+  if (!DATE_RE.test(date)) {
+    return res.status(400).json({ error: 'invalid_date', message: 'date must be in YYYY-MM-DD format.' });
+  }
+  if (date < todayISO()) {
+    return res.status(400).json({ error: 'date_in_past', message: 'Journey date cannot be in the past.' });
+  }
+
+  let fromStation;
+  let toStation;
+  try {
+    fromStation = await stations.getByCode(fromCode);
+    toStation = await stations.getByCode(toCode);
+  } catch (err) {
+    return res.status(502).json({ error: 'station_lookup_failed', message: err.message });
+  }
+  if (!fromStation) {
+    return res.status(400).json({ error: 'invalid_station', field: 'from', message: `Unknown station code: ${fromCode}` });
+  }
+  if (!toStation) {
+    return res.status(400).json({ error: 'invalid_station', field: 'to', message: `Unknown station code: ${toCode}` });
+  }
+  if (fromCode === toCode) {
+    return res.status(400).json({ error: 'same_station', message: 'From and To stations must be different.' });
+  }
+
+  const toCheck = [{ trainNumber, trainName: null, fromStationCode: fromCode, toStationCode: toCode }];
+
+  const job = createJob({
+    query: { from: fromStation, to: toStation, date, trainNumber },
+    totalCandidates: 1,
+    toCheck: 1,
+    checked: 0,
+    trains: [],
+    trainsNotRunningOnDate: [],
   });
 
   runSearchJob(job, fromCode, toCode, date, toCheck).catch((err) => {
