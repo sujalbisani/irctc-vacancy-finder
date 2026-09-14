@@ -154,16 +154,35 @@ async function checkTrain(train, fromCode, toCode, date) {
   return { ...train, trainName, chartStatus: 'ok', chartMeta: chart.chartMeta, usableVacancies, splitOptions, partialCoverageOnly };
 }
 
+// irctcChart.fetchChart already caps concurrent browser contexts at
+// MAX_CONCURRENT_FETCHES (the shared phone tunnel can only take so much at
+// once) -- but that cap does nothing for a multi-train route search unless
+// something actually issues calls in parallel for it to enforce. A worker
+// pool sized to match does that: each worker pulls the next unchecked train
+// and awaits it, so up to MAX_CONCURRENT_FETCHES trains are genuinely being
+// checked at the same time instead of one at a time. Sized to match rather
+// than exceed that cap -- going higher would just pile up idle promises
+// waiting on the same semaphore for no benefit.
 async function runSearchJob(job, fromCode, toCode, date, toCheck) {
-  for (const train of toCheck) {
-    try {
-      const result = await checkTrain(train, fromCode, toCode, date);
-      job.trains.push(result);
-    } catch (err) {
-      job.trains.push({ ...train, chartStatus: 'unavailable', errorCode: err.code || 'UNKNOWN', message: err.message });
+  let nextIndex = 0;
+
+  async function worker() {
+    for (;;) {
+      const i = nextIndex++;
+      if (i >= toCheck.length) return;
+      const train = toCheck[i];
+      try {
+        const result = await checkTrain(train, fromCode, toCode, date);
+        job.trains.push(result);
+      } catch (err) {
+        job.trains.push({ ...train, chartStatus: 'unavailable', errorCode: err.code || 'UNKNOWN', message: err.message });
+      }
+      updateJob(job.id, { checked: job.trains.length });
     }
-    updateJob(job.id, { checked: job.trains.length });
   }
+
+  const workerCount = Math.min(irctcChart.MAX_CONCURRENT_FETCHES, toCheck.length);
+  await Promise.all(Array.from({ length: workerCount }, worker));
   updateJob(job.id, { status: 'done' });
 }
 

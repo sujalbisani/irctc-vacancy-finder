@@ -502,4 +502,4 @@ async function fetchChartInternal(trainNumber, dateStr, boardingCode) {
   }
 }
 
-module.exports = { fetchChart, closeBrowser, ChartError };
+module.exports = { fetchChart, closeBrowser, ChartError, MAX_CONCURRENT_FETCHES };
