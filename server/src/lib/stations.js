@@ -1,7 +1,17 @@
 const { fetchJsonWithRetry } = require('./httpRetry');
+const { TTLCache } = require('./cache');
 const ntesStations = require('./ntesStations');
 
 const AUTOSUGGEST_URL = 'https://cttrainsapi.confirmtkt.com/api/v2/trains/stations/auto-suggestion';
+
+// Station names/codes barely change -- cache search results aggressively so
+// repeated or overlapping queries (retyping, switching between From/To,
+// multiple users searching the same station) skip the network entirely.
+const searchCache = new TTLCache();
+const SEARCH_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+// Collapses identical concurrent requests (e.g. React StrictMode's double
+// effect invocation) into a single outbound call.
+const inFlight = new Map();
 
 /**
  * Live station search via confirmtkt's public autosuggest API. Used instead of
@@ -24,9 +34,14 @@ async function confirmtktSearch(query, limit) {
     language: 'EN',
   });
 
-  const json = await fetchJsonWithRetry(`${AUTOSUGGEST_URL}?${params.toString()}`, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; IRCTCVacancyTool/1.0)' },
-  });
+  // This is a live-typing autocomplete -- a slow/failed attempt should fall
+  // through to NTES quickly rather than burn multiple seconds retrying with
+  // backoff (unlike the chart/train-search calls, which are worth waiting on).
+  const json = await fetchJsonWithRetry(
+    `${AUTOSUGGEST_URL}?${params.toString()}`,
+    { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; IRCTCVacancyTool/1.0)' } },
+    { retries: 1, backoffMs: 250 }
+  );
   const list = json?.data?.stationList || [];
 
   const seenCodes = new Set();
@@ -43,14 +58,34 @@ async function confirmtktSearch(query, limit) {
 
 async function search(query, limit = 15) {
   if (!query || query.trim().length < 2) return [];
-  try {
-    return await confirmtktSearch(query, limit);
-  } catch (err) {
+
+  const key = `${query.trim().toLowerCase()}|${limit}`;
+  const cached = searchCache.get(key);
+  if (cached) return cached;
+
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+
+  const promise = (async () => {
     try {
-      return await ntesStations.search(query, limit);
-    } catch {
-      throw new Error(`station search failed: ${err.message}`);
+      const results = await confirmtktSearch(query, limit);
+      searchCache.set(key, results, SEARCH_CACHE_TTL_MS);
+      return results;
+    } catch (err) {
+      try {
+        const results = await ntesStations.search(query, limit);
+        searchCache.set(key, results, SEARCH_CACHE_TTL_MS);
+        return results;
+      } catch {
+        throw new Error(`station search failed: ${err.message}`);
+      }
     }
+  })();
+  inFlight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlight.delete(key);
   }
 }
 
