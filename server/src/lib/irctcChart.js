@@ -36,6 +36,31 @@ async function closeBrowser() {
   }
 }
 
+// All real IRCTC traffic funnels through one tunnel (a single phone acting as
+// a Tailscale exit node) and one shared Chromium instance. Without a cap, a
+// burst of concurrent visitors would open many browser contexts at once,
+// which can exhaust the VPS's free-tier RAM and hammer IRCTC's site from that
+// one phone IP in a way that risks getting it rate-limited/blocked -- breaking
+// the tunnel for everyone. Extra requests queue instead of running in
+// parallel; each waits its turn rather than failing.
+const MAX_CONCURRENT_FETCHES = 2;
+let activeFetches = 0;
+const fetchWaitQueue = [];
+
+function acquireFetchSlot() {
+  if (activeFetches < MAX_CONCURRENT_FETCHES) {
+    activeFetches++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => fetchWaitQueue.push(resolve));
+}
+
+function releaseFetchSlot() {
+  const next = fetchWaitQueue.shift();
+  if (next) next();
+  else activeFetches--;
+}
+
 function extractCode(text) {
   const m = /\(([A-Z0-9]{2,6})\)\s*$/.exec((text || '').trim());
   return m ? m[1] : null;
@@ -328,6 +353,15 @@ async function readAllVacantBerthRows(page) {
  * { routeCodes, chartMeta, classes: [{code, label, rows}] }.
  */
 async function fetchChart(trainNumber, dateStr, boardingCode) {
+  await acquireFetchSlot();
+  try {
+    return await fetchChartInternal(trainNumber, dateStr, boardingCode);
+  } finally {
+    releaseFetchSlot();
+  }
+}
+
+async function fetchChartInternal(trainNumber, dateStr, boardingCode) {
   const browser = await getBrowser();
   // In some deployments (e.g. a cloud VPS whose IP is on datacenter/VPN
   // reputation blocklists), only the IRCTC-bound browser traffic is routed

@@ -17,6 +17,24 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // practical limit for real routes.
 const MAX_TRAIN_LIMIT = 200;
 
+// Each search drives a real browser through IRCTC via a single phone's
+// mobile-data tunnel -- a script (or an impatient double-click) hammering
+// this endpoint can exhaust that shared, limited resource for everyone.
+// One new search per IP per window is plenty for genuine use.
+const RATE_LIMIT_WINDOW_MS = 20 * 1000;
+const rateLimitCache = new TTLCache();
+
+function rateLimit(req, res, next) {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  if (rateLimitCache.get(ip)) {
+    return res
+      .status(429)
+      .json({ error: 'rate_limited', message: 'Please wait a few seconds before starting another search.' });
+  }
+  rateLimitCache.set(ip, true, RATE_LIMIT_WINDOW_MS);
+  next();
+}
+
 function todayISO() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -129,7 +147,7 @@ async function runSearchJob(job, fromCode, toCode, date, toCheck) {
   updateJob(job.id, { status: 'done' });
 }
 
-router.post('/', async (req, res) => {
+router.post('/', rateLimit, async (req, res) => {
   const fromCode = String(req.body.from || req.query.from || '').trim().toUpperCase();
   const toCode = String(req.body.to || req.query.to || '').trim().toUpperCase();
   const date = String(req.body.date || req.query.date || '').trim();
